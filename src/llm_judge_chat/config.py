@@ -19,12 +19,22 @@ class Settings(BaseSettings):
     )
     gen_api_key: str = Field(..., env="GEN_API_KEY", description="Generator API key")
     gen_model: str = Field("gpt-3.5-turbo", env="GEN_MODEL", description="Generator model name")
+    gen_system_prompt: str = Field(
+        "You are a professional assistant. Provide clear, accurate, and concise answers. Only cite sources that were explicitly mentioned by the user; never fabricate citations.",
+        env="GEN_SYSTEM_PROMPT",
+        description="Generator system prompt override",
+    )
 
     judge_base_url: HttpUrl = Field(
         "https://api.openai.com/v1", env="JUDGE_BASE_URL", description="Judge API base URL"
     )
     judge_api_key: str = Field(..., env="JUDGE_API_KEY", description="Judge API key")
     judge_model: str = Field("gpt-4", env="JUDGE_MODEL", description="Judge model name")
+    judge_system_prompt: str = Field(
+        "You are an impartial dialogue judge. Score each candidate response from 0-10 for relevance, faithfulness, helpfulness, coherence, and persona/tone fit. Return a JSON object with candidate scores, overall ratings, and concise rationales.",
+        env="JUDGE_SYSTEM_PROMPT",
+        description="Judge system prompt override",
+    )
 
     temperature: float = Field(0.8, env="TEMPERATURE", ge=0.0, le=2.0)
     top_p: float = Field(0.9, env="TOP_P", ge=0.0, le=1.0)

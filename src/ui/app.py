@@ -9,8 +9,8 @@ import streamlit as st
 from dotenv import dotenv_values
 
 from llm_judge_chat.context import build_context, window_history
-from llm_judge_chat.generator import generate_candidates
-from llm_judge_chat.judge import score_candidates
+from llm_judge_chat.generator import SYSTEM_PROMPT as DEFAULT_GEN_PROMPT, generate_candidates
+from llm_judge_chat.judge import JUDGE_PROMPT as DEFAULT_JUDGE_PROMPT, score_candidates
 from llm_judge_chat.logging_io import log_turn
 from llm_judge_chat.memory import MemoryManager
 from llm_judge_chat.openai_compat import chat_completion
@@ -38,6 +38,8 @@ DEFAULTS = {
     "TIMEOUT_S": "60",
     "CONTEXT_K": "8",
     "ENABLE_MEMORY": "true",
+    "GEN_SYSTEM_PROMPT": DEFAULT_GEN_PROMPT,
+    "JUDGE_SYSTEM_PROMPT": DEFAULT_JUDGE_PROMPT,
 }
 
 
@@ -94,6 +96,7 @@ async def run_pipeline(settings: Dict[str, Any]) -> Tuple[
         presence_penalty=float(settings["PRESENCE_PENALTY"]),
         frequency_penalty=float(settings["FREQUENCY_PENALTY"]),
         timeout=float(settings["TIMEOUT_S"]),
+        system_prompt=str(settings.get("GEN_SYSTEM_PROMPT", "")),
     )
     judged, judge_meta = await score_candidates(
         base_url=settings["JUDGE_BASE_URL"],
@@ -103,6 +106,7 @@ async def run_pipeline(settings: Dict[str, Any]) -> Tuple[
         candidates=candidates,
         weights=JudgeRubricWeights(),
         timeout=float(settings["TIMEOUT_S"]),
+        system_prompt=str(settings.get("JUDGE_SYSTEM_PROMPT", "")),
     )
     best = select_best(judged)
     return context_pack, candidates, judged, best, judge_meta
@@ -213,12 +217,24 @@ def render_sidebar(settings: Dict[str, Any]) -> Dict[str, Any]:
         settings["GEN_BASE_URL"] = st.text_input("Base URL", value=settings["GEN_BASE_URL"])
         settings["GEN_API_KEY"] = st.text_input("API Key", value=settings["GEN_API_KEY"], type="password")
         settings["GEN_MODEL"] = st.text_input("Model", value=settings["GEN_MODEL"])
+        settings["GEN_SYSTEM_PROMPT"] = st.text_area(
+            "System prompt",
+            value=settings["GEN_SYSTEM_PROMPT"],
+            height=120,
+            help="Customize the assistant's behavior and tone.",
+        )
         if st.button("Test generator connection"):
             test_connection("Generator", settings["GEN_BASE_URL"], settings["GEN_API_KEY"], settings["GEN_MODEL"])
         st.subheader("Judge")
         settings["JUDGE_BASE_URL"] = st.text_input("Judge Base URL", value=settings["JUDGE_BASE_URL"])
         settings["JUDGE_API_KEY"] = st.text_input("Judge API Key", value=settings["JUDGE_API_KEY"], type="password")
         settings["JUDGE_MODEL"] = st.text_input("Judge Model", value=settings["JUDGE_MODEL"])
+        settings["JUDGE_SYSTEM_PROMPT"] = st.text_area(
+            "Judge prompt",
+            value=settings["JUDGE_SYSTEM_PROMPT"],
+            height=120,
+            help="Add evaluation goals or weighting guidance for the judge.",
+        )
         if st.button("Test judge connection"):
             test_connection("Judge", settings["JUDGE_BASE_URL"], settings["JUDGE_API_KEY"], settings["JUDGE_MODEL"])
         st.subheader("Decoding")
@@ -235,8 +251,10 @@ def render_sidebar(settings: Dict[str, Any]) -> Dict[str, Any]:
             persist_settings({
                 "GEN_BASE_URL": settings["GEN_BASE_URL"],
                 "GEN_MODEL": settings["GEN_MODEL"],
+                "GEN_SYSTEM_PROMPT": settings["GEN_SYSTEM_PROMPT"],
                 "JUDGE_BASE_URL": settings["JUDGE_BASE_URL"],
                 "JUDGE_MODEL": settings["JUDGE_MODEL"],
+                "JUDGE_SYSTEM_PROMPT": settings["JUDGE_SYSTEM_PROMPT"],
                 "TEMPERATURE": settings["TEMPERATURE"],
                 "TOP_P": settings["TOP_P"],
                 "MAX_TOKENS": settings["MAX_TOKENS"],

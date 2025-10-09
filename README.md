@@ -25,6 +25,8 @@ auditing and downstream dataset preparation.
 * JSONL logging per turn and DPO pair export utility.
 * Streamlit UI mirroring LM Studio’s layout with sidebar controls, chat
   bubbles, regeneration, and score inspection.
+* Editable system prompts for both assistant and judge models directly in the
+  sidebar, enabling persona tweaks and custom evaluation goals without code.
 
 ## Installation
 
@@ -47,7 +49,9 @@ URL and API key fields. The sidebar exposes decoding knobs and connection tests
 for each server. Settings can be persisted back to `.env` via the “Save as
 defaults” button.
 
-The generator and judge may use different servers or models. For example:
+The generator and judge may use different servers or models. Customize their
+system prompts in the sidebar to enforce desired personas, values, or judging
+criteria. For example:
 
 * Generator: local LM Studio server at `http://localhost:1234/v1` with model
   `mistral-7b-instruct`.

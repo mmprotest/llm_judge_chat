@@ -51,8 +51,15 @@ async def _single_candidate(
     return Candidate(text=text.strip(), meta=meta)
 
 
-def _build_messages(history: Sequence[Turn], style_instruction: str, memory_summary: Dict[str, Any]) -> List[Dict[str, str]]:
-    messages: List[Dict[str, str]] = [{"role": "system", "content": f"{SYSTEM_PROMPT} {style_instruction}"}]
+def _build_messages(
+    history: Sequence[Turn],
+    style_instruction: str,
+    memory_summary: Dict[str, Any],
+    system_prompt: str | None,
+) -> List[Dict[str, str]]:
+    prompt = (system_prompt or "").strip() or SYSTEM_PROMPT
+    combined_prompt = f"{prompt} {style_instruction}".strip()
+    messages: List[Dict[str, str]] = [{"role": "system", "content": combined_prompt}]
     if memory_summary:
         summary_lines = [
             "Known user facts:" ,
@@ -77,6 +84,7 @@ async def generate_candidates(
     presence_penalty: float,
     frequency_penalty: float,
     timeout: float,
+    system_prompt: str | None = None,
 ) -> List[Candidate]:
     """Generate *n* diverse candidate replies."""
 
@@ -85,7 +93,7 @@ async def generate_candidates(
     for idx in range(n):
         style = styles[idx % len(styles)]
         style_instruction = STYLE_ADAPTERS[style]
-        messages = _build_messages(history, style_instruction, memory_summary)
+        messages = _build_messages(history, style_instruction, memory_summary, system_prompt)
         decoding = {
             "temperature": min(2.0, max(0.0, temperature + random.uniform(-0.1, 0.1))),
             "top_p": min(1.0, max(0.1, top_p + random.uniform(-0.05, 0.05))),

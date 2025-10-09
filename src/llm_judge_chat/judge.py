@@ -32,9 +32,11 @@ def _build_judge_messages(
     history: Sequence[Turn],
     candidates: Sequence[Candidate],
     weights: JudgeRubricWeights,
+    system_prompt: str | None,
 ) -> List[Dict[str, str]]:
+    prompt = (system_prompt or "").strip() or JUDGE_PROMPT
     messages: List[Dict[str, str]] = [
-        {"role": "system", "content": JUDGE_PROMPT},
+        {"role": "system", "content": prompt},
         {
             "role": "user",
             "content": "Evaluate the following dialogue and candidates.",
@@ -107,10 +109,11 @@ async def score_candidates(
     candidates: Sequence[Candidate],
     weights: JudgeRubricWeights,
     timeout: float,
+    system_prompt: str | None = None,
 ) -> Tuple[List[Judged], Dict[str, Any]]:
     """Score candidates using the judge model."""
 
-    messages = _build_judge_messages(history, candidates, weights)
+    messages = _build_judge_messages(history, candidates, weights, system_prompt)
     metadata: Dict[str, Any] = {"fallback": False}
     try:
         text, usage, raw = await chat_completion(
