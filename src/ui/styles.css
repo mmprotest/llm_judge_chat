@@ -1,0 +1,136 @@
+body {
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    background-color: #1d1f23;
+    color: #f4f5f6;
+}
+
+.stApp header, .stApp footer { display: none; }
+
+.sidebar .block-container {
+    padding: 1rem 1.2rem;
+}
+
+.chat-container {
+    background-color: #181a1f;
+    padding: 1rem 1.5rem 6rem 1.5rem;
+    border-radius: 16px;
+    min-height: 70vh;
+}
+
+.chat-row {
+    display: flex;
+    margin-bottom: 1rem;
+}
+
+.chat-row.left { justify-content: flex-start; }
+.chat-row.right { justify-content: flex-end; }
+
+.chat-bubble {
+    max-width: 75%;
+    padding: 0.85rem 1rem;
+    border-radius: 18px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+    line-height: 1.5;
+    font-size: 0.95rem;
+    backdrop-filter: blur(8px);
+}
+
+.chat-bubble.user {
+    background: linear-gradient(135deg, #3a7bd5, #00d2ff);
+    color: #fff;
+    border-bottom-left-radius: 4px;
+}
+
+.chat-bubble.assistant {
+    background: #262a33;
+    color: #f4f5f6;
+    border-bottom-right-radius: 4px;
+}
+
+.chat-role {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    opacity: 0.7;
+    margin-bottom: 0.25rem;
+}
+
+.chat-content code {
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    background: rgba(0, 0, 0, 0.25);
+    padding: 0.15rem 0.3rem;
+    border-radius: 4px;
+}
+
+.candidate-card {
+    background: #20242d;
+    padding: 1rem;
+    border-radius: 14px;
+    margin-bottom: 0.75rem;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.candidate-rank {
+    font-weight: 600;
+    color: #8ab4ff;
+    margin-bottom: 0.5rem;
+}
+
+.candidate-text {
+    margin-bottom: 0.75rem;
+    white-space: pre-wrap;
+}
+
+.candidate-scores {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 0.25rem 0.75rem;
+    font-size: 0.85rem;
+}
+
+.candidate-rationale {
+    font-size: 0.85rem;
+    opacity: 0.8;
+    margin-top: 0.75rem;
+}
+
+.toolbar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.toolbar button {
+    background: #2f343f;
+    color: #f4f5f6;
+    border: none;
+    padding: 0.4rem 0.75rem;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.toolbar button:hover {
+    background: #3c4454;
+}
+
+.token-counter {
+    font-size: 0.75rem;
+    opacity: 0.6;
+    margin-left: 0.5rem;
+}
+
+.new-chat-button {
+    width: 100%;
+    margin-bottom: 1rem;
+    background: linear-gradient(135deg, #5a5df0, #8f6bff);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 0.6rem 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.new-chat-button:hover {
+    filter: brightness(1.05);
+}
