@@ -108,6 +108,11 @@ async def score_candidates(
     history: Sequence[Turn],
     candidates: Sequence[Candidate],
     weights: JudgeRubricWeights,
+    temperature: float = 0.0,
+    top_p: float = 1.0,
+    max_tokens: int = 800,
+    presence_penalty: float = 0.0,
+    frequency_penalty: float = 0.0,
     timeout: float,
     system_prompt: str | None = None,
 ) -> Tuple[List[Judged], Dict[str, Any]]:
@@ -121,11 +126,11 @@ async def score_candidates(
             api_key=api_key,
             model=model,
             messages=messages,
-            temperature=0.0,
-            top_p=1.0,
-            max_tokens=800,
-            presence_penalty=0.0,
-            frequency_penalty=0.0,
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
             timeout=timeout,
         )
         payload = orjson.loads(text)
