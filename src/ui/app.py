@@ -152,7 +152,14 @@ def execute_generation(settings: Dict[str, Any], *, new_user: bool) -> None:
         metadata=metadata,
     )
     st.session_state.running = False
-    st.experimental_rerun()
+    _trigger_rerun()
+
+
+def _trigger_rerun() -> None:
+    rerun = getattr(st, "experimental_rerun", None)
+    if rerun is None:
+        rerun = getattr(st, "rerun")
+    rerun()
 
 
 def _format_usage(usages: Sequence[Dict[str, Any]], text: str) -> str:
