@@ -55,9 +55,25 @@ DEFAULTS = {
 _EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 
+def _decode_env_value(value: str) -> str:
+    """Decode escaped characters stored in .env values."""
+
+    if "\\n" in value or "\\" in value:
+        try:
+            return value.encode("utf-8").decode("unicode_escape")
+        except UnicodeDecodeError:
+            return value
+    return value
+
+
 def load_env_defaults() -> Dict[str, str]:
     values = DEFAULTS.copy()
-    values.update({k.upper(): v for k, v in dotenv_values(".env").items() if v is not None})
+    env_values = {
+        k.upper(): _decode_env_value(v)
+        for k, v in dotenv_values(".env").items()
+        if v is not None
+    }
+    values.update(env_values)
     legacy_timeout = values.get("TIMEOUT_S")
     if "GEN_TIMEOUT_S" not in values and legacy_timeout is not None:
         values["GEN_TIMEOUT_S"] = legacy_timeout
@@ -91,6 +107,8 @@ def init_state() -> None:
         st.session_state.title_generated = False
     if "pending_title_prompt" not in st.session_state:
         st.session_state.pending_title_prompt = ""
+    if "settings" not in st.session_state:
+        st.session_state.settings = load_env_defaults()
 
 
 def new_chat() -> None:
@@ -300,9 +318,9 @@ def _finalize_generation() -> None:
 
 
 def _trigger_rerun() -> None:
-    rerun = getattr(st, "experimental_rerun", None)
-    if rerun is None:
-        rerun = getattr(st, "rerun")
+    rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun", None)
+    if rerun is None:  # pragma: no cover - depends on Streamlit version
+        raise RuntimeError("Streamlit rerun API not available")
     rerun()
 
 
@@ -514,9 +532,9 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
 
 def main() -> None:
     init_state()
-    settings = load_env_defaults()
-    settings = render_sidebar(settings)
-    render_chat_area(settings)
+    settings = st.session_state.settings
+    st.session_state.settings = render_sidebar(settings)
+    render_chat_area(st.session_state.settings)
 
 
 if __name__ == "__main__":  # pragma: no cover - entry point

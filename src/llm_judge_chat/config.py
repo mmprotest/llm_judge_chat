@@ -65,6 +65,18 @@ def load_settings(**overrides: Any) -> Settings:
     return Settings(**overrides)
 
 
+def _serialize_env_value(value: Any) -> str:
+    """Convert a Python value into a .env-friendly string."""
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    value_str = str(value)
+    if "\n" in value_str:
+        # Persist multiline values using escaped newlines so python-dotenv can parse them
+        value_str = value_str.replace("\\", "\\\\").replace("\n", "\\n")
+    return value_str
+
+
 def persist_settings(updates: Dict[str, Any]) -> None:
     """Persist provided settings into the .env file."""
 
@@ -79,13 +91,10 @@ def persist_settings(updates: Dict[str, Any]) -> None:
     for key, value in updates.items():
         if value is None:
             continue
-        if isinstance(value, bool):
-            value_str = "true" if value else "false"
-        else:
-            value_str = str(value)
+        value_str = _serialize_env_value(value)
         if current.get(key) == value_str:
             continue
-        set_key(str(env_path), key, value_str)
+        set_key(str(env_path), key, value_str, quote_mode="always")
 
 
 __all__ = ["Settings", "load_settings", "persist_settings"]
