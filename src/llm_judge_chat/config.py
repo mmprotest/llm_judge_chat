@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from dotenv import dotenv_values, set_key
 from pydantic import BaseSettings, Field, HttpUrl, validator
 
 ENV_PATH = Path(".env")
@@ -70,11 +69,14 @@ def _serialize_env_value(value: Any) -> str:
 
     if isinstance(value, bool):
         return "true" if value else "false"
-    value_str = str(value)
-    if "\n" in value_str:
-        # Persist multiline values using escaped newlines so python-dotenv can parse them
-        value_str = value_str.replace("\\", "\\\\").replace("\n", "\\n")
-    return value_str
+
+    if isinstance(value, str):
+        value_str = value.replace("\r\n", "\n").replace("\r", "\n")
+        value_str = value_str.replace("\\", "\\\\").replace("\"", "\\\"")
+        value_str = value_str.replace("\n", "\\n")
+        return f'"{value_str}"'
+
+    return str(value)
 
 
 def persist_settings(updates: Dict[str, Any]) -> None:
@@ -84,17 +86,49 @@ def persist_settings(updates: Dict[str, Any]) -> None:
         return
 
     env_path = ENV_PATH
-    if not env_path.exists():
-        env_path.write_text("", encoding="utf-8")
+    if env_path.exists():
+        existing_lines = env_path.read_text(encoding="utf-8").splitlines()
+    else:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_lines = []
 
-    current = dotenv_values(env_path)
-    for key, value in updates.items():
-        if value is None:
+    serialized = {
+        key: _serialize_env_value(value)
+        for key, value in updates.items()
+        if value is not None
+    }
+    if not serialized:
+        return
+
+    final_lines: List[str] = []
+    handled: set[str] = set()
+
+    for line in existing_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            final_lines.append(line)
             continue
-        value_str = _serialize_env_value(value)
-        if current.get(key) == value_str:
-            continue
-        set_key(str(env_path), key, value_str, quote_mode="always")
+
+        key, _sep, _value = line.partition("=")
+        key = key.strip()
+        if key in serialized:
+            final_lines.append(f"{key}={serialized[key]}")
+            handled.add(key)
+        else:
+            final_lines.append(line)
+
+    for key, value_str in serialized.items():
+        if key not in handled:
+            final_lines.append(f"{key}={value_str}")
+
+    new_content = "\n".join(final_lines)
+    if final_lines:
+        new_content += "\n"
+
+    if env_path.exists() and env_path.read_text(encoding="utf-8") == new_content:
+        return
+
+    env_path.write_text(new_content, encoding="utf-8")
 
 
 __all__ = ["Settings", "load_settings", "persist_settings"]

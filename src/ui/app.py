@@ -58,12 +58,12 @@ _EXECUTOR = ThreadPoolExecutor(max_workers=2)
 def _decode_env_value(value: str) -> str:
     """Decode escaped characters stored in .env values."""
 
-    if "\\n" in value or "\\" in value:
-        try:
-            return value.encode("utf-8").decode("unicode_escape")
-        except UnicodeDecodeError:
-            return value
-    return value
+    if not value:
+        return value
+
+    decoded = value.replace("\\r\\n", "\n").replace("\\r", "\n").replace("\\n", "\n")
+    decoded = decoded.replace("\\\\", "\\")
+    return decoded
 
 
 def load_env_defaults() -> Dict[str, str]:
@@ -125,16 +125,19 @@ def new_chat() -> None:
     st.session_state.pending_title_prompt = ""
 
 
-async def run_pipeline(settings: Dict[str, Any]) -> Tuple[
+async def run_pipeline(
+    settings: Dict[str, Any],
+    history: Sequence[Turn],
+    memory_manager: MemoryManager,
+) -> Tuple[
     Dict[str, Any],
     Sequence[Candidate],
     Sequence[Judged],
     Judged,
     Dict[str, Any],
 ]:
-    memory_manager: MemoryManager = st.session_state.memory_manager
-    history: List[Turn] = st.session_state.dialogue  # type: ignore[assignment]
-    state = DialogueState(history=history, memory=memory_manager.store)
+    history_list: List[Turn] = list(history)
+    state = DialogueState(history=history_list, memory=memory_manager.store)
     context_pack = build_context(state, memory_manager, k=int(settings["CONTEXT_K"]))
     recent_turns = window_history(state.history, k=int(settings["CONTEXT_K"]))
     candidates = await generate_candidates(
@@ -171,7 +174,11 @@ async def run_pipeline(settings: Dict[str, Any]) -> Tuple[
     return context_pack, candidates, judged, best, judge_meta
 
 
-def _run_pipeline_sync(settings: Dict[str, Any]) -> Tuple[
+def _run_pipeline_sync(
+    settings: Dict[str, Any],
+    history: Sequence[Turn],
+    memory_manager: MemoryManager,
+) -> Tuple[
     Dict[str, Any],
     Sequence[Candidate],
     Sequence[Judged],
@@ -180,14 +187,21 @@ def _run_pipeline_sync(settings: Dict[str, Any]) -> Tuple[
 ]:
     """Blocking helper executed in a background thread."""
 
-    return asyncio.run(run_pipeline(settings))
+    return asyncio.run(run_pipeline(settings, history, memory_manager))
 
 
 def _start_generation(settings: Dict[str, Any], *, new_user: bool) -> None:
     if st.session_state.get("generation_future"):
         return
     settings_snapshot = dict(settings)
-    future: Future = _EXECUTOR.submit(_run_pipeline_sync, settings_snapshot)
+    history_snapshot = [Turn(**turn.dict()) for turn in st.session_state.dialogue]
+    memory_manager: MemoryManager = st.session_state.memory_manager
+    future: Future = _EXECUTOR.submit(
+        _run_pipeline_sync,
+        settings_snapshot,
+        history_snapshot,
+        memory_manager,
+    )
     st.session_state.generation_future = future
     st.session_state.generation_settings = settings_snapshot
     st.session_state.generation_new_user = new_user
