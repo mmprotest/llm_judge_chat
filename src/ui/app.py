@@ -18,7 +18,10 @@ from llm_judge_chat.schemas import Candidate, DialogueState, JudgeRubricWeights,
 from llm_judge_chat.selector import select_best
 from llm_judge_chat.utils import estimate_tokens
 from llm_judge_chat.config import persist_settings
-from .components import inject_css, render_candidates, render_message
+try:  # pragma: no cover - import path differs when run via ``streamlit run``
+    from .components import inject_css, render_candidates, render_message
+except ImportError:  # pragma: no cover - executed when module has no package context
+    from components import inject_css, render_candidates, render_message
 
 st.set_page_config(page_title="LLM Judge Chat", layout="wide")
 
@@ -149,7 +152,14 @@ def execute_generation(settings: Dict[str, Any], *, new_user: bool) -> None:
         metadata=metadata,
     )
     st.session_state.running = False
-    st.experimental_rerun()
+    _trigger_rerun()
+
+
+def _trigger_rerun() -> None:
+    rerun = getattr(st, "experimental_rerun", None)
+    if rerun is None:
+        rerun = getattr(st, "rerun")
+    rerun()
 
 
 def _format_usage(usages: Sequence[Dict[str, Any]], text: str) -> str:
