@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Sequence, Tuple
+import json
+import re
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 try:  # pragma: no cover - fallback
     import orjson
@@ -91,6 +93,9 @@ def _fallback_scores(history: Sequence[Turn], candidates: Sequence[Candidate]) -
     return judged
 
 
+JSON_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
+
+
 def _compute_overall(scores: Dict[str, float], weights: JudgeRubricWeights) -> float:
     total = 0.0
     weight_dict = weights.as_dict()
@@ -98,6 +103,20 @@ def _compute_overall(scores: Dict[str, float], weights: JudgeRubricWeights) -> f
         score = scores.get(key, 0.0)
         total += (score / 10.0) * weight * 10.0
     return round(total, 4)
+
+
+def _parse_judge_payload(text: str) -> Dict[str, Any]:
+    try:
+        return orjson.loads(text)
+    except Exception:
+        match = JSON_PATTERN.search(text)
+        if not match:
+            raise
+        segment = match.group(0)
+        try:
+            return orjson.loads(segment)
+        except Exception:
+            return json.loads(segment)
 
 
 async def score_candidates(
@@ -108,6 +127,11 @@ async def score_candidates(
     history: Sequence[Turn],
     candidates: Sequence[Candidate],
     weights: JudgeRubricWeights,
+    temperature: float = 0.0,
+    top_p: float = 1.0,
+    max_tokens: int = 800,
+    presence_penalty: float = 0.0,
+    frequency_penalty: float = 0.0,
     timeout: float,
     system_prompt: str | None = None,
 ) -> Tuple[List[Judged], Dict[str, Any]]:
@@ -121,30 +145,37 @@ async def score_candidates(
             api_key=api_key,
             model=model,
             messages=messages,
-            temperature=0.0,
-            top_p=1.0,
-            max_tokens=800,
-            presence_penalty=0.0,
-            frequency_penalty=0.0,
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
             timeout=timeout,
         )
-        payload = orjson.loads(text)
-        judged: List[Judged] = []
-        for cand, result in zip(candidates, payload.get("candidates", [])):
-            scores = {k: float(v) for k, v in result.get("scores", {}).items()}
-            if not scores:
-                continue
-            judged.append(
-                Judged(
-                    candidate=cand,
-                    scores=scores,
-                    overall=_compute_overall(scores, weights),
-                    rationale=str(result.get("rationale", "")),
-                )
-            )
-        if len(judged) != len(candidates):
-            raise ValueError("Judge response count mismatch")
+        payload = _parse_judge_payload(text)
+        judged_slots: List[Optional[Judged]] = [None] * len(candidates)
+        results = payload.get("candidates", [])
+        for idx, cand in enumerate(candidates):
+            if idx < len(results):
+                result = results[idx] or {}
+                scores = {k: float(v) for k, v in result.get("scores", {}).items()}
+                if scores:
+                    judged_slots[idx] = Judged(
+                        candidate=cand,
+                        scores=scores,
+                        overall=_compute_overall(scores, weights),
+                        rationale=str(result.get("rationale", "")),
+                    )
+        fallback_used = False
+        for idx, judged_item in enumerate(judged_slots):
+            if judged_item is None:
+                judged_slots[idx] = _fallback_scores(history, [candidates[idx]])[0]
+                fallback_used = True
+        judged = [item for item in judged_slots if item is not None]
         metadata.update({"usage": usage, "raw": raw})
+        if fallback_used:
+            metadata["fallback"] = True
+            metadata["fallback_reason"] = "partial"
         return judged, metadata
     except Exception as exc:  # pragma: no cover - exercised in tests via monkeypatch
         metadata.update({"fallback": True, "error": str(exc)})

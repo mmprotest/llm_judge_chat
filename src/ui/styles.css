@@ -12,9 +12,20 @@ body {
 
 .chat-container {
     background-color: #181a1f;
-    padding: 1rem 1.5rem 6rem 1.5rem;
+    padding: 1rem 1.5rem 2rem 1.5rem;
     border-radius: 16px;
-    min-height: 70vh;
+}
+
+.chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.chat-header h2 {
+    margin: 0;
+    font-size: 1.3rem;
 }
 
 .chat-row {
@@ -45,6 +56,11 @@ body {
     background: #262a33;
     color: #f4f5f6;
     border-bottom-right-radius: 4px;
+}
+
+.thinking-bubble {
+    opacity: 0.75;
+    animation: bubblePulse 1.6s ease-in-out infinite;
 }
 
 .chat-role {
@@ -113,6 +129,7 @@ body {
     background: #3c4454;
 }
 
+
 .token-counter {
     font-size: 0.75rem;
     opacity: 0.6;
@@ -133,4 +150,19 @@ body {
 
 .new-chat-button:hover {
     filter: brightness(1.05);
+}
+
+@keyframes bubblePulse {
+    0% {
+        transform: scale(1);
+        opacity: 0.6;
+    }
+    50% {
+        transform: scale(1.02);
+        opacity: 0.9;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 0.6;
+    }
 }
