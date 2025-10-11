@@ -204,6 +204,70 @@ def _begin_edit(index: int) -> None:
     st.session_state.edit_notice = ""
 
 
+def _editor_height(text: str) -> int:
+    """Pick an editor height that roughly matches the current text."""
+
+    lines = text.count("\n") + 1
+    return max(120, min(280, lines * 26))
+
+
+def _render_inline_editor(turn: Turn, idx: int) -> Tuple[str, bool, bool]:
+    align = "left" if turn.role == "user" else "right"
+    role_class = "user" if turn.role == "user" else "assistant"
+    current_text = st.session_state.get(
+        f"edit_area_{idx}", st.session_state.editing_text or turn.content
+    )
+    st.markdown(
+        f"<div class='chat-row {align}'><div class='chat-bubble {role_class} editing' data-role='{role_class}'>",
+        unsafe_allow_html=True,
+    )
+    edit_value = st.text_area(
+        "Edit message",
+        value=current_text,
+        key=f"edit_area_{idx}",
+        height=_editor_height(current_text),
+        label_visibility="collapsed",
+    )
+    action_cols = st.columns([1, 1, 6])
+    with action_cols[0]:
+        save_clicked = st.button(
+            "Save",
+            key=f"save-edit-{idx}",
+            use_container_width=True,
+        )
+    with action_cols[1]:
+        cancel_clicked = st.button(
+            "Cancel",
+            key=f"cancel-edit-{idx}",
+            use_container_width=True,
+        )
+    st.markdown("</div></div>", unsafe_allow_html=True)
+    return edit_value, save_clicked, cancel_clicked
+
+
+def _delete_message(index: int) -> bool:
+    dialogue = list(st.session_state.dialogue)
+    if index < 0 or index >= len(dialogue):
+        return False
+
+    deleted_turn = dialogue[index]
+    # Drop the deleted message and anything that followed it to mirror edit behaviour
+    st.session_state.dialogue = dialogue[:index]
+    _clear_edit_state()
+    st.session_state.memory_manager = _rebuild_memory(st.session_state.dialogue)
+    st.session_state.last_judged = []
+    st.session_state.token_usage = {}
+    st.session_state.pending_generation = None
+    st.session_state.is_thinking = False
+    force_title_reset = deleted_turn.role == "user" and index == 0
+    _reset_title_seed(force=force_title_reset)
+    if deleted_turn.role == "assistant":
+        st.session_state.edit_notice = "Assistant reply deleted. Regenerate to continue."
+    else:
+        st.session_state.edit_notice = "Message deleted. Provide a new prompt to continue."
+    return True
+
+
 def _apply_edit(new_text: str) -> bool:
     index = st.session_state.editing_index
     if index is None:
@@ -557,28 +621,50 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
             st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
             for idx, turn in enumerate(st.session_state.dialogue):
                 with st.container():
-                    render_message(turn, idx)
-                    button_cols = (
-                        st.columns([6, 1]) if turn.role == "user" else st.columns([1, 6])
-                    )
-                    edit_col = button_cols[1] if turn.role == "user" else button_cols[0]
-                    if edit_col.button("Edit", key=f"edit-btn-{idx}"):
-                        _begin_edit(idx)
-                    if st.session_state.editing_index == idx:
-                        edit_value = st.text_area(
-                            "Edit message",
-                            value=st.session_state.get(
-                                f"edit_area_{idx}", st.session_state.editing_text
-                            ),
-                            key=f"edit_area_{idx}",
-                            height=140,
+                    if turn.role == "user":
+                        message_col, actions_col = st.columns([24, 2])
+                    else:
+                        actions_col, message_col = st.columns([2, 24])
+
+                    save_clicked = False
+                    cancel_clicked = False
+                    with message_col:
+                        if st.session_state.editing_index == idx:
+                            edit_value, save_clicked, cancel_clicked = _render_inline_editor(
+                                turn, idx
+                            )
+                            st.session_state.editing_text = edit_value
+                        else:
+                            render_message(turn, idx)
+
+                    with actions_col:
+                        action_stack = st.container()
+                        action_stack.markdown(
+                            "<div class='chat-action-stack'>", unsafe_allow_html=True
                         )
-                        st.session_state.editing_text = edit_value
-                        action_cols = st.columns([1, 1, 4])
-                        if action_cols[0].button("Save", key=f"save-edit-{idx}"):
-                            if not _apply_edit(edit_value):
+                        edit_clicked = action_stack.button(
+                            "✏️",
+                            key=f"edit-btn-{idx}",
+                            help="Edit message",
+                        )
+                        delete_clicked = action_stack.button(
+                            "🗑️",
+                            key=f"delete-btn-{idx}",
+                            help="Delete message",
+                        )
+                        action_stack.markdown("</div>", unsafe_allow_html=True)
+
+                    if edit_clicked:
+                        _begin_edit(idx)
+                    if delete_clicked:
+                        if not _delete_message(idx):
+                            st.warning("Unable to delete message.")
+
+                    if st.session_state.editing_index == idx:
+                        if save_clicked:
+                            if not _apply_edit(st.session_state.editing_text):
                                 st.warning("Edited message cannot be empty.")
-                        if action_cols[1].button("Cancel", key=f"cancel-edit-{idx}"):
+                        if cancel_clicked:
                             _clear_edit_state()
                             st.session_state.edit_notice = ""
             if thinking:
