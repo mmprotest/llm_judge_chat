@@ -71,11 +71,11 @@ class Judged(BaseModel):
 class JudgeRubricWeights(BaseModel):
     """Default weighting for rubric dimensions."""
 
-    relevance: float = 0.25
-    faithfulness: float = 0.25
-    helpfulness: float = 0.25
-    coherence: float = 0.20
-    persona: float = 0.05
+    in_character_fidelity: float = 0.25
+    continuity: float = 0.2
+    emotional_realism: float = 0.2
+    scene_advancement: float = 0.2
+    coherence: float = 0.15
 
     def as_dict(self) -> Dict[str, float]:
         """Return the weights as a plain dictionary."""

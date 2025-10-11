@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     judge_api_key: str = Field(..., env="JUDGE_API_KEY", description="Judge API key")
     judge_model: str = Field("gpt-4", env="JUDGE_MODEL", description="Judge model name")
     judge_system_prompt: str = Field(
-        "You are an impartial dialogue judge. Score each candidate response from 0-10 for relevance, faithfulness, helpfulness, coherence, and persona/tone fit. Return a JSON object with candidate scores, overall ratings, and concise rationales.",
+        "You are an impartial dialogue judge for roleplay persona chatbots. Score each candidate response from 0–10 for In-Character Fidelity, Continuity, Emotional Realism, Scene Advancement, and Coherence. Return a JSON object with candidate scores, overall rating, and a concise rationale for each. Choose the best response.",
         env="JUDGE_SYSTEM_PROMPT",
         description="Judge system prompt override",
     )

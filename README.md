@@ -18,8 +18,9 @@ auditing and downstream dataset preparation.
 ## Features
 
 * Parallel generation of 3–5 stylistically diverse candidate replies.
-* Judge model scoring across relevance, faithfulness, helpfulness, coherence,
-  and persona/tone fit with weighted aggregation and rationale.
+* Judge model scoring across in-character fidelity, continuity, emotional
+  realism, scene advancement, and coherence with weighted aggregation and
+  concise rationales.
 * Automatic selection of the top candidate plus optional fallback heuristics.
 * Rolling memory heuristics capturing user facts, preferences, and TODOs.
 * JSONL logging per turn and DPO pair export utility.

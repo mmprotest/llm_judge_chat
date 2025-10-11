@@ -80,6 +80,24 @@ def _decode_env_value(value: str) -> str:
     return decoded
 
 
+def _trigger_rerun() -> None:
+    try:
+        st.experimental_rerun()
+    except AttributeError:  # pragma: no cover - depends on Streamlit version
+        st.rerun()
+
+
+def _decode_env_value(value: str) -> str:
+    """Decode escaped characters stored in .env values."""
+
+    if not value:
+        return value
+
+    decoded = value.replace("\\r\\n", "\n").replace("\\r", "\n").replace("\\n", "\n")
+    decoded = decoded.replace("\\\\", "\\")
+    return decoded
+
+
 def load_env_defaults() -> Dict[str, str]:
     values = DEFAULTS.copy()
     env_values = {
