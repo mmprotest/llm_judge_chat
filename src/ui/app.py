@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import streamlit as st
 from dotenv import dotenv_values
@@ -98,6 +97,12 @@ def init_state() -> None:
         st.session_state.pending_title_prompt = ""
     if "settings" not in st.session_state:
         st.session_state.settings = load_env_defaults()
+    if "editing_index" not in st.session_state:
+        st.session_state.editing_index = None  # type: ignore[assignment]
+    if "editing_text" not in st.session_state:
+        st.session_state.editing_text = ""
+    if "edit_notice" not in st.session_state:
+        st.session_state.edit_notice = ""
 
 
 def new_chat() -> None:
@@ -108,6 +113,78 @@ def new_chat() -> None:
     st.session_state.conversation_title = "New Conversation"
     st.session_state.title_generated = False
     st.session_state.pending_title_prompt = ""
+    st.session_state.editing_index = None
+    st.session_state.editing_text = ""
+    st.session_state.edit_notice = ""
+
+
+def _rebuild_memory(history: Sequence[Turn]) -> MemoryManager:
+    manager = MemoryManager()
+    turns = list(history)
+    for end in range(len(turns)):
+        manager.update(turns[: end + 1])
+    return manager
+
+
+def _reset_title_seed(*, force: bool = False) -> None:
+    first_user: Optional[str] = None
+    for turn in st.session_state.dialogue:
+        if turn.role == "user":
+            first_user = turn.content
+            break
+    if first_user:
+        st.session_state.pending_title_prompt = first_user
+        if force or not st.session_state.title_generated:
+            st.session_state.title_generated = False
+            st.session_state.conversation_title = "New Conversation"
+    else:
+        st.session_state.pending_title_prompt = ""
+        st.session_state.title_generated = False
+        st.session_state.conversation_title = "New Conversation"
+
+
+def _clear_edit_state() -> None:
+    index = st.session_state.editing_index
+    if index is not None:
+        st.session_state.pop(f"edit_area_{index}", None)
+    st.session_state.editing_index = None
+    st.session_state.editing_text = ""
+
+
+def _begin_edit(index: int) -> None:
+    previous = st.session_state.editing_index
+    if previous is not None and previous != index:
+        st.session_state.pop(f"edit_area_{previous}", None)
+    st.session_state.editing_index = index
+    current = st.session_state.dialogue[index].content
+    st.session_state.editing_text = current
+    st.session_state[f"edit_area_{index}"] = current
+    st.session_state.edit_notice = ""
+
+
+def _apply_edit(new_text: str) -> bool:
+    index = st.session_state.editing_index
+    if index is None:
+        return False
+
+    stripped = new_text.strip()
+    if not stripped:
+        return False
+
+    dialogue = list(st.session_state.dialogue)
+    turn = dialogue[index]
+    dialogue[index] = Turn(role=turn.role, content=stripped, meta=turn.meta)
+    st.session_state.dialogue = dialogue[: index + 1]
+    force_title_reset = turn.role == "user" and index == 0
+    st.session_state.memory_manager = _rebuild_memory(st.session_state.dialogue)
+    st.session_state.last_judged = []
+    st.session_state.token_usage = {}
+    _reset_title_seed(force=force_title_reset)
+    st.session_state.edit_notice = (
+        "Message updated. Regenerate the assistant reply to continue."
+    )
+    _clear_edit_state()
+    return True
 
 
 async def run_pipeline(
@@ -192,6 +269,7 @@ def _apply_generation_success(
         usage=usage_summary,
         metadata=metadata,
     )
+    st.session_state.edit_notice = ""
 
 
 async def _request_conversation_title(
@@ -286,6 +364,8 @@ def handle_send(user_text: str) -> bool:
     message = user_text.strip()
     if not message:
         return False
+    _clear_edit_state()
+    st.session_state.edit_notice = ""
     st.session_state.dialogue.append(Turn(role="user", content=message))
     if not st.session_state.title_generated and not st.session_state.pending_title_prompt:
         st.session_state.pending_title_prompt = message
@@ -295,6 +375,8 @@ def handle_send(user_text: str) -> bool:
 def handle_regenerate() -> bool:
     if not st.session_state.dialogue or st.session_state.dialogue[-1].role != "assistant":
         return False
+    _clear_edit_state()
+    st.session_state.edit_notice = ""
     st.session_state.dialogue.pop()
     return True
 
@@ -431,12 +513,36 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
             inject_css()
             st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
             for idx, turn in enumerate(st.session_state.dialogue):
-                render_message(turn, idx)
-            if thinking:
-                st.markdown(
-                    """
-                    <div class='chat-row right'>
-                        <div class='chat-bubble assistant thinking-bubble'>
+                with st.container():
+                    render_message(turn, idx)
+                    button_cols = (
+                        st.columns([6, 1]) if turn.role == "user" else st.columns([1, 6])
+                    )
+                    edit_col = button_cols[1] if turn.role == "user" else button_cols[0]
+                    if edit_col.button("Edit", key=f"edit-btn-{idx}"):
+                        _begin_edit(idx)
+                    if st.session_state.editing_index == idx:
+                        edit_value = st.text_area(
+                            "Edit message",
+                            value=st.session_state.get(
+                                f"edit_area_{idx}", st.session_state.editing_text
+                            ),
+                            key=f"edit_area_{idx}",
+                            height=140,
+                        )
+                        st.session_state.editing_text = edit_value
+                        action_cols = st.columns([1, 1, 4])
+                        if action_cols[0].button("Save", key=f"save-edit-{idx}"):
+                            if not _apply_edit(edit_value):
+                                st.warning("Edited message cannot be empty.")
+                        if action_cols[1].button("Cancel", key=f"cancel-edit-{idx}"):
+                            _clear_edit_state()
+                            st.session_state.edit_notice = ""
+                if thinking:
+                    st.markdown(
+                        """
+                        <div class='chat-row right'>
+                            <div class='chat-bubble assistant thinking-bubble'>
                             <div class='chat-role'>Assistant</div>
                             <div class='chat-content'><em>Thinking…</em></div>
                         </div>
@@ -464,7 +570,7 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
             st.session_state.token_usage = {}
             draw_chat(thinking=True)
             with st.spinner("Generating assistant reply…"):
-                _execute_generation(settings, new_user=True)
+                _execute_generation(dict(settings), new_user=True)
             draw_chat()
             action_taken = True
         else:
@@ -475,7 +581,7 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
             st.session_state.token_usage = {}
             draw_chat(thinking=True)
             with st.spinner("Regenerating assistant reply…"):
-                _execute_generation(settings, new_user=False)
+                _execute_generation(dict(settings), new_user=False)
             draw_chat()
             action_taken = True
         else:
@@ -489,6 +595,9 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
     if st.session_state.show_candidates and st.session_state.last_judged:
         st.markdown("### Candidate Rankings")
         render_candidates(st.session_state.last_judged)
+
+    if st.session_state.edit_notice:
+        st.info(st.session_state.edit_notice)
 
 
 def main() -> None:
