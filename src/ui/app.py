@@ -62,6 +62,24 @@ def _decode_env_value(value: str) -> str:
     return decoded
 
 
+def _trigger_rerun() -> None:
+    try:
+        st.experimental_rerun()
+    except AttributeError:  # pragma: no cover - depends on Streamlit version
+        st.rerun()
+
+
+def _decode_env_value(value: str) -> str:
+    """Decode escaped characters stored in .env values."""
+
+    if not value:
+        return value
+
+    decoded = value.replace("\\r\\n", "\n").replace("\\r", "\n").replace("\\n", "\n")
+    decoded = decoded.replace("\\\\", "\\")
+    return decoded
+
+
 def load_env_defaults() -> Dict[str, str]:
     values = DEFAULTS.copy()
     env_values = {
@@ -103,6 +121,10 @@ def init_state() -> None:
         st.session_state.editing_text = ""
     if "edit_notice" not in st.session_state:
         st.session_state.edit_notice = ""
+    if "pending_generation" not in st.session_state:
+        st.session_state.pending_generation = None
+    if "is_thinking" not in st.session_state:
+        st.session_state.is_thinking = False
 
 
 def new_chat() -> None:
@@ -116,6 +138,8 @@ def new_chat() -> None:
     st.session_state.editing_index = None
     st.session_state.editing_text = ""
     st.session_state.edit_notice = ""
+    st.session_state.pending_generation = None
+    st.session_state.is_thinking = False
 
 
 def _rebuild_memory(history: Sequence[Turn]) -> MemoryManager:
@@ -539,21 +563,21 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
                         if action_cols[1].button("Cancel", key=f"cancel-edit-{idx}"):
                             _clear_edit_state()
                             st.session_state.edit_notice = ""
-                if thinking:
-                    st.markdown(
-                        """
-                        <div class='chat-row right'>
-                            <div class='chat-bubble assistant thinking-bubble'>
-                            <div class='chat-role'>Assistant</div>
-                            <div class='chat-content'><em>Thinking…</em></div>
-                        </div>
+            if thinking:
+                st.markdown(
+                    """
+                    <div class='chat-row right'>
+                        <div class='chat-bubble assistant thinking-bubble'>
+                        <div class='chat-role'>Assistant</div>
+                        <div class='chat-content'><em>Thinking…</em></div>
                     </div>
-                    """,
+                </div>
+                """,
                     unsafe_allow_html=True,
                 )
             st.markdown("</div>", unsafe_allow_html=True)
 
-    draw_chat()
+    draw_chat(thinking=bool(st.session_state.get("is_thinking")))
 
     with st.form("chat-input", clear_on_submit=True):
         user_text = st.text_area("Message", height=120, key="chat_input")
@@ -569,24 +593,42 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
         if handle_send(user_text):
             st.session_state.last_judged = []
             st.session_state.token_usage = {}
-            draw_chat(thinking=True)
-            with st.spinner("Generating assistant reply…"):
-                _execute_generation(dict(settings), new_user=True)
-            draw_chat()
-        else:
-            st.warning("Please enter a message before sending.")
+            st.session_state.pending_generation = {
+                "settings": dict(settings),
+                "new_user": True,
+                "label": "Generating assistant reply…",
+            }
+            st.session_state.is_thinking = True
+            _trigger_rerun()
+            return
+        st.warning("Please enter a message before sending.")
     elif regenerate_clicked:
         if handle_regenerate():
             st.session_state.last_judged = []
             st.session_state.token_usage = {}
-            draw_chat(thinking=True)
-            with st.spinner("Regenerating assistant reply…"):
-                _execute_generation(dict(settings), new_user=False)
-            draw_chat()
-        else:
-            st.info("Nothing to regenerate yet.")
+            st.session_state.pending_generation = {
+                "settings": dict(settings),
+                "new_user": False,
+                "label": "Regenerating assistant reply…",
+            }
+            st.session_state.is_thinking = True
+            _trigger_rerun()
+            return
+        st.info("Nothing to regenerate yet.")
     elif stop_clicked:
         st.info("No generation in progress to stop.")
+
+    pending = st.session_state.get("pending_generation")
+    if pending:
+        label = str(pending.get("label", "Generating assistant reply…"))
+        pending_settings = dict(pending.get("settings", {}))
+        new_user = bool(pending.get("new_user", True))
+        with st.spinner(label):
+            _execute_generation(pending_settings, new_user=new_user)
+        st.session_state.pending_generation = None
+        st.session_state.is_thinking = False
+        _trigger_rerun()
+        return
 
     if st.session_state.show_candidates and st.session_state.last_judged:
         st.markdown("### Candidate Rankings")
