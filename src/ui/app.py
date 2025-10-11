@@ -204,6 +204,29 @@ def _begin_edit(index: int) -> None:
     st.session_state.edit_notice = ""
 
 
+def _delete_message(index: int) -> bool:
+    dialogue = list(st.session_state.dialogue)
+    if index < 0 or index >= len(dialogue):
+        return False
+
+    deleted_turn = dialogue[index]
+    # Drop the deleted message and anything that followed it to mirror edit behaviour
+    st.session_state.dialogue = dialogue[:index]
+    _clear_edit_state()
+    st.session_state.memory_manager = _rebuild_memory(st.session_state.dialogue)
+    st.session_state.last_judged = []
+    st.session_state.token_usage = {}
+    st.session_state.pending_generation = None
+    st.session_state.is_thinking = False
+    force_title_reset = deleted_turn.role == "user" and index == 0
+    _reset_title_seed(force=force_title_reset)
+    if deleted_turn.role == "assistant":
+        st.session_state.edit_notice = "Assistant reply deleted. Regenerate to continue."
+    else:
+        st.session_state.edit_notice = "Message deleted. Provide a new prompt to continue."
+    return True
+
+
 def _apply_edit(new_text: str) -> bool:
     index = st.session_state.editing_index
     if index is None:
@@ -557,13 +580,37 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
             st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
             for idx, turn in enumerate(st.session_state.dialogue):
                 with st.container():
-                    render_message(turn, idx)
-                    button_cols = (
-                        st.columns([6, 1]) if turn.role == "user" else st.columns([1, 6])
-                    )
-                    edit_col = button_cols[1] if turn.role == "user" else button_cols[0]
-                    if edit_col.button("Edit", key=f"edit-btn-{idx}"):
+                    if turn.role == "user":
+                        message_col, actions_col = st.columns([24, 2])
+                    else:
+                        actions_col, message_col = st.columns([2, 24])
+
+                    with message_col:
+                        render_message(turn, idx)
+
+                    with actions_col:
+                        action_stack = st.container()
+                        action_stack.markdown(
+                            "<div class='chat-action-stack'>", unsafe_allow_html=True
+                        )
+                        edit_clicked = action_stack.button(
+                            "✏️",
+                            key=f"edit-btn-{idx}",
+                            help="Edit message",
+                        )
+                        delete_clicked = action_stack.button(
+                            "🗑️",
+                            key=f"delete-btn-{idx}",
+                            help="Delete message",
+                        )
+                        action_stack.markdown("</div>", unsafe_allow_html=True)
+
+                    if edit_clicked:
                         _begin_edit(idx)
+                    if delete_clicked:
+                        if not _delete_message(idx):
+                            st.warning("Unable to delete message.")
+
                     if st.session_state.editing_index == idx:
                         edit_value = st.text_area(
                             "Edit message",
