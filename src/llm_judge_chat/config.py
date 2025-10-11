@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from dotenv import dotenv_values, set_key
 from pydantic import BaseSettings, Field, HttpUrl, validator
 
 ENV_PATH = Path(".env")
@@ -31,7 +30,7 @@ class Settings(BaseSettings):
     judge_api_key: str = Field(..., env="JUDGE_API_KEY", description="Judge API key")
     judge_model: str = Field("gpt-4", env="JUDGE_MODEL", description="Judge model name")
     judge_system_prompt: str = Field(
-        "You are an impartial dialogue judge. Score each candidate response from 0-10 for relevance, faithfulness, helpfulness, coherence, and persona/tone fit. Return a JSON object with candidate scores, overall ratings, and concise rationales.",
+        "You are an impartial dialogue judge for roleplay persona chatbots. Score each candidate response from 0–10 for In-Character Fidelity, Continuity, Emotional Realism, Scene Advancement, and Coherence. Return a JSON object with candidate scores, overall rating, and a concise rationale for each. Choose the best response.",
         env="JUDGE_SYSTEM_PROMPT",
         description="Judge system prompt override",
     )
@@ -65,6 +64,21 @@ def load_settings(**overrides: Any) -> Settings:
     return Settings(**overrides)
 
 
+def _serialize_env_value(value: Any) -> str:
+    """Convert a Python value into a .env-friendly string."""
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+
+    if isinstance(value, str):
+        value_str = value.replace("\r\n", "\n").replace("\r", "\n")
+        value_str = value_str.replace("\\", "\\\\").replace("\"", "\\\"")
+        value_str = value_str.replace("\n", "\\n")
+        return f'"{value_str}"'
+
+    return str(value)
+
+
 def persist_settings(updates: Dict[str, Any]) -> None:
     """Persist provided settings into the .env file."""
 
@@ -72,20 +86,49 @@ def persist_settings(updates: Dict[str, Any]) -> None:
         return
 
     env_path = ENV_PATH
-    if not env_path.exists():
-        env_path.write_text("", encoding="utf-8")
+    if env_path.exists():
+        existing_lines = env_path.read_text(encoding="utf-8").splitlines()
+    else:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_lines = []
 
-    current = dotenv_values(env_path)
-    for key, value in updates.items():
-        if value is None:
+    serialized = {
+        key: _serialize_env_value(value)
+        for key, value in updates.items()
+        if value is not None
+    }
+    if not serialized:
+        return
+
+    final_lines: List[str] = []
+    handled: set[str] = set()
+
+    for line in existing_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            final_lines.append(line)
             continue
-        if isinstance(value, bool):
-            value_str = "true" if value else "false"
+
+        key, _sep, _value = line.partition("=")
+        key = key.strip()
+        if key in serialized:
+            final_lines.append(f"{key}={serialized[key]}")
+            handled.add(key)
         else:
-            value_str = str(value)
-        if current.get(key) == value_str:
-            continue
-        set_key(str(env_path), key, value_str)
+            final_lines.append(line)
+
+    for key, value_str in serialized.items():
+        if key not in handled:
+            final_lines.append(f"{key}={value_str}")
+
+    new_content = "\n".join(final_lines)
+    if final_lines:
+        new_content += "\n"
+
+    if env_path.exists() and env_path.read_text(encoding="utf-8") == new_content:
+        return
+
+    env_path.write_text(new_content, encoding="utf-8")
 
 
 __all__ = ["Settings", "load_settings", "persist_settings"]
