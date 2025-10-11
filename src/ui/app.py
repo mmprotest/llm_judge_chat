@@ -51,6 +51,16 @@ DEFAULTS = {
     "JUDGE_SYSTEM_PROMPT": DEFAULT_JUDGE_PROMPT,
 }
 
+def _decode_env_value(value: str) -> str:
+    """Decode escaped characters stored in .env values."""
+
+    if not value:
+        return value
+
+    decoded = value.replace("\\r\\n", "\n").replace("\\r", "\n").replace("\\n", "\n")
+    decoded = decoded.replace("\\\\", "\\")
+    return decoded
+
 
 def _trigger_rerun() -> None:
     try:
