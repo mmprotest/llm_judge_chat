@@ -52,9 +52,6 @@ DEFAULTS = {
     "JUDGE_SYSTEM_PROMPT": DEFAULT_JUDGE_PROMPT,
 }
 
-_EXECUTOR = ThreadPoolExecutor(max_workers=2)
-
-
 def _decode_env_value(value: str) -> str:
     """Decode escaped characters stored in .env values."""
 
@@ -87,14 +84,6 @@ def init_state() -> None:
         st.session_state.dialogue = []  # type: ignore[assignment]
     if "memory_manager" not in st.session_state:
         st.session_state.memory_manager = MemoryManager()
-    if "running" not in st.session_state:
-        st.session_state.running = False
-    if "generation_future" not in st.session_state:
-        st.session_state.generation_future = None
-    if "generation_settings" not in st.session_state:
-        st.session_state.generation_settings = None
-    if "generation_new_user" not in st.session_state:
-        st.session_state.generation_new_user = False
     if "last_judged" not in st.session_state:
         st.session_state.last_judged = []  # type: ignore[assignment]
     if "show_candidates" not in st.session_state:
@@ -116,10 +105,6 @@ def new_chat() -> None:
     st.session_state.memory_manager = MemoryManager()
     st.session_state.last_judged = []
     st.session_state.token_usage = {}
-    st.session_state.running = False
-    st.session_state.generation_future = None
-    st.session_state.generation_settings = None
-    st.session_state.generation_new_user = False
     st.session_state.conversation_title = "New Conversation"
     st.session_state.title_generated = False
     st.session_state.pending_title_prompt = ""
@@ -172,40 +157,6 @@ async def run_pipeline(
     )
     best = select_best(judged)
     return context_pack, candidates, judged, best, judge_meta
-
-
-def _run_pipeline_sync(
-    settings: Dict[str, Any],
-    history: Sequence[Turn],
-    memory_manager: MemoryManager,
-) -> Tuple[
-    Dict[str, Any],
-    Sequence[Candidate],
-    Sequence[Judged],
-    Judged,
-    Dict[str, Any],
-]:
-    """Blocking helper executed in a background thread."""
-
-    return asyncio.run(run_pipeline(settings, history, memory_manager))
-
-
-def _start_generation(settings: Dict[str, Any], *, new_user: bool) -> None:
-    if st.session_state.get("generation_future"):
-        return
-    settings_snapshot = dict(settings)
-    history_snapshot = [Turn(**turn.dict()) for turn in st.session_state.dialogue]
-    memory_manager: MemoryManager = st.session_state.memory_manager
-    future: Future = _EXECUTOR.submit(
-        _run_pipeline_sync,
-        settings_snapshot,
-        history_snapshot,
-        memory_manager,
-    )
-    st.session_state.generation_future = future
-    st.session_state.generation_settings = settings_snapshot
-    st.session_state.generation_new_user = new_user
-    st.session_state.running = True
 
 
 def _apply_generation_success(
@@ -297,22 +248,13 @@ def _update_conversation_title_if_needed(settings: Dict[str, Any]) -> None:
     st.session_state.pending_title_prompt = ""
 
 
-def _finalize_generation() -> None:
-    future: Future | None = st.session_state.get("generation_future")
-    if future is None or not isinstance(future, Future):
-        return
-    if not future.done():
-        return
-    if future.cancelled():
-        st.session_state.generation_future = None
-        st.session_state.generation_settings = None
-        st.session_state.generation_new_user = False
-        st.session_state.running = False
-        return
-    new_user = bool(st.session_state.get("generation_new_user", False))
-    settings_snapshot = st.session_state.get("generation_settings") or {}
+def _execute_generation(settings: Dict[str, Any], *, new_user: bool) -> None:
+    history_snapshot = [Turn(**turn.dict()) for turn in st.session_state.dialogue]
+    memory_manager: MemoryManager = st.session_state.memory_manager
     try:
-        context_pack, candidates, judged, best, judge_meta = future.result()
+        context_pack, candidates, judged, best, judge_meta = asyncio.run(
+            run_pipeline(settings, history_snapshot, memory_manager)
+        )
     except Exception as exc:  # pragma: no cover - network error path
         st.error(f"Generation failed: {exc}")
         if new_user and st.session_state.dialogue and st.session_state.dialogue[-1].role == "user":
@@ -320,22 +262,11 @@ def _finalize_generation() -> None:
             st.session_state.pending_title_prompt = ""
         st.session_state.last_judged = []
         st.session_state.token_usage = {}
-    else:
-        _apply_generation_success(context_pack, candidates, judged, best, judge_meta)
-        if settings_snapshot:
-            _update_conversation_title_if_needed(settings_snapshot)
-    finally:
-        st.session_state.generation_future = None
-        st.session_state.generation_settings = None
-        st.session_state.generation_new_user = False
-        st.session_state.running = False
+        return
 
-
-def _trigger_rerun() -> None:
-    rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun", None)
-    if rerun is None:  # pragma: no cover - depends on Streamlit version
-        raise RuntimeError("Streamlit rerun API not available")
-    rerun()
+    _apply_generation_success(context_pack, candidates, judged, best, judge_meta)
+    if settings:
+        _update_conversation_title_if_needed(settings)
 
 
 def _format_usage(usages: Sequence[Dict[str, Any]], text: str) -> str:
@@ -351,26 +282,21 @@ def _format_usage(usages: Sequence[Dict[str, Any]], text: str) -> str:
     return "n/a"
 
 
-def handle_send(user_text: str, settings: Dict[str, Any]) -> None:
-    if not user_text.strip():
-        return
-    if st.session_state.running:
-        st.warning("Generation already in progress.")
-        return
+def handle_send(user_text: str) -> bool:
     message = user_text.strip()
+    if not message:
+        return False
     st.session_state.dialogue.append(Turn(role="user", content=message))
     if not st.session_state.title_generated and not st.session_state.pending_title_prompt:
         st.session_state.pending_title_prompt = message
-    _start_generation(settings, new_user=True)
+    return True
 
 
-def handle_regenerate(settings: Dict[str, Any]) -> None:
-    if st.session_state.running:
-        return
+def handle_regenerate() -> bool:
     if not st.session_state.dialogue or st.session_state.dialogue[-1].role != "assistant":
-        return
+        return False
     st.session_state.dialogue.pop()
-    _start_generation(settings, new_user=False)
+    return True
 
 
 def test_connection(name: str, base_url: str, api_key: str, model: str) -> None:
@@ -399,7 +325,6 @@ def render_sidebar(settings: Dict[str, Any]) -> Dict[str, Any]:
         st.markdown("<button class='new-chat-button'>New Chat</button>", unsafe_allow_html=True)
         if st.button("Reset conversation"):
             new_chat()
-            _trigger_rerun()
         st.subheader("Generator")
         settings["GEN_BASE_URL"] = st.text_input("Base URL", value=settings["GEN_BASE_URL"])
         settings["GEN_API_KEY"] = st.text_input("API Key", value=settings["GEN_API_KEY"], type="password")
@@ -487,7 +412,6 @@ def render_sidebar(settings: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def render_chat_area(settings: Dict[str, Any]) -> None:
-    _finalize_generation()
     title = st.session_state.conversation_title or "Conversation"
     st.markdown(
         f"<div class='chat-header'><h2>{title}</h2></div>",
@@ -499,25 +423,29 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
             f"<div class='token-counter'>Usage · Generator: {token_info.get('generator')} · Judge: {token_info.get('judge')}</div>",
             unsafe_allow_html=True,
         )
-    chat_container = st.container()
-    with chat_container:
-        inject_css()
-        st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
-        for idx, turn in enumerate(st.session_state.dialogue):
-            render_message(turn, idx)
-        if st.session_state.running:
-            st.markdown(
-                """
-                <div class='chat-row right'>
-                    <div class='chat-bubble assistant thinking-bubble'>
-                        <div class='chat-role'>Assistant</div>
-                        <div class='chat-content'><em>Thinking…</em></div>
+
+    chat_placeholder = st.empty()
+
+    def draw_chat(thinking: bool = False) -> None:
+        with chat_placeholder.container():
+            inject_css()
+            st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
+            for idx, turn in enumerate(st.session_state.dialogue):
+                render_message(turn, idx)
+            if thinking:
+                st.markdown(
+                    """
+                    <div class='chat-row right'>
+                        <div class='chat-bubble assistant thinking-bubble'>
+                            <div class='chat-role'>Assistant</div>
+                            <div class='chat-content'><em>Thinking…</em></div>
+                        </div>
                     </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        st.markdown("</div>", unsafe_allow_html=True)
+                    """,
+                    unsafe_allow_html=True,
+                )
+            st.markdown("</div>", unsafe_allow_html=True)
+
     with st.form("chat-input", clear_on_submit=True):
         user_text = st.text_area("Message", height=120, key="chat_input")
         cols = st.columns([1, 1, 1, 2])
@@ -527,18 +455,37 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
         st.session_state.show_candidates = cols[3].checkbox(
             "Show candidates & scores", value=st.session_state.show_candidates
         )
+
+    action_taken = False
+
     if send_clicked:
-        handle_send(user_text, settings)
+        if handle_send(user_text):
+            st.session_state.last_judged = []
+            st.session_state.token_usage = {}
+            draw_chat(thinking=True)
+            with st.spinner("Generating assistant reply…"):
+                _execute_generation(settings, new_user=True)
+            draw_chat()
+            action_taken = True
+        else:
+            st.warning("Please enter a message before sending.")
     elif regenerate_clicked:
-        handle_regenerate(settings)
+        if handle_regenerate():
+            st.session_state.last_judged = []
+            st.session_state.token_usage = {}
+            draw_chat(thinking=True)
+            with st.spinner("Regenerating assistant reply…"):
+                _execute_generation(settings, new_user=False)
+            draw_chat()
+            action_taken = True
+        else:
+            st.info("Nothing to regenerate yet.")
     elif stop_clicked:
-        future = st.session_state.get("generation_future")
-        if isinstance(future, Future):
-            future.cancel()
-        st.session_state.generation_future = None
-        st.session_state.generation_settings = None
-        st.session_state.generation_new_user = False
-        st.session_state.running = False
+        st.info("No generation in progress to stop.")
+
+    if not action_taken:
+        draw_chat()
+
     if st.session_state.show_candidates and st.session_state.last_judged:
         st.markdown("### Candidate Rankings")
         render_candidates(st.session_state.last_judged)
