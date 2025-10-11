@@ -209,6 +209,20 @@ def _extract_overall(raw: Dict[str, Any], scores: Dict[str, float], weights: Jud
     return _compute_overall(normalized_scores, weights)
 
 
+def _parse_judge_payload(text: str) -> Dict[str, Any]:
+    try:
+        return orjson.loads(text)
+    except Exception:
+        match = JSON_PATTERN.search(text)
+        if not match:
+            raise
+        segment = match.group(0)
+        try:
+            return orjson.loads(segment)
+        except Exception:
+            return json.loads(segment)
+
+
 async def score_candidates(
     *,
     base_url: str,
