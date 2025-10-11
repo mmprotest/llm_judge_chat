@@ -58,6 +58,43 @@ body {
     border-bottom-right-radius: 4px;
 }
 
+.chat-bubble.editing {
+    box-shadow: 0 0 0 2px rgba(138, 180, 255, 0.35);
+    background: rgba(38, 42, 51, 0.92);
+}
+
+.chat-bubble.editing[data-role="user"] {
+    background: rgba(58, 123, 213, 0.25);
+    color: #fff;
+}
+
+.chat-bubble.editing div[data-testid="stTextArea"] {
+    margin-top: 0.35rem;
+}
+
+.chat-bubble.editing div[data-testid="stTextArea"] textarea {
+    background: rgba(12, 14, 18, 0.45);
+    color: inherit;
+    border-radius: 12px;
+    border: 1px solid rgba(138, 180, 255, 0.4);
+    box-shadow: none;
+}
+
+.chat-bubble.editing .stButton > button {
+    background: rgba(138, 180, 255, 0.18);
+    border: none;
+    color: #e2e6ff;
+    padding: 0.4rem 0.6rem;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.chat-bubble.editing .stButton > button:hover {
+    background: rgba(138, 180, 255, 0.32);
+    color: #ffffff;
+}
+
 .thinking-bubble {
     opacity: 0.75;
     animation: bubblePulse 1.6s ease-in-out infinite;
