@@ -509,6 +509,7 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
     chat_placeholder = st.empty()
 
     def draw_chat(thinking: bool = False) -> None:
+        chat_placeholder.empty()
         with chat_placeholder.container():
             inject_css()
             st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
@@ -552,6 +553,8 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
                 )
             st.markdown("</div>", unsafe_allow_html=True)
 
+    draw_chat()
+
     with st.form("chat-input", clear_on_submit=True):
         user_text = st.text_area("Message", height=120, key="chat_input")
         cols = st.columns([1, 1, 1, 2])
@@ -562,8 +565,6 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
             "Show candidates & scores", value=st.session_state.show_candidates
         )
 
-    action_taken = False
-
     if send_clicked:
         if handle_send(user_text):
             st.session_state.last_judged = []
@@ -572,7 +573,6 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
             with st.spinner("Generating assistant reply…"):
                 _execute_generation(dict(settings), new_user=True)
             draw_chat()
-            action_taken = True
         else:
             st.warning("Please enter a message before sending.")
     elif regenerate_clicked:
@@ -583,14 +583,10 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
             with st.spinner("Regenerating assistant reply…"):
                 _execute_generation(dict(settings), new_user=False)
             draw_chat()
-            action_taken = True
         else:
             st.info("Nothing to regenerate yet.")
     elif stop_clicked:
         st.info("No generation in progress to stop.")
-
-    if not action_taken:
-        draw_chat()
 
     if st.session_state.show_candidates and st.session_state.last_judged:
         st.markdown("### Candidate Rankings")
