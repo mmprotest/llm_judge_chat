@@ -28,6 +28,18 @@ body {
     font-size: 1.3rem;
 }
 
+.chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.chat-header h2 {
+    margin: 0;
+    font-size: 1.3rem;
+}
+
 .chat-row {
     display: flex;
     margin-bottom: 1rem;
