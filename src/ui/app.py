@@ -238,7 +238,6 @@ def _begin_edit(index: int) -> None:
     st.session_state.editing_index = index
     current = st.session_state.dialogue[index].content
     st.session_state.editing_text = current
-    st.session_state[f"edit_area_{index}"] = current
     st.session_state.edit_notice = ""
 
 
@@ -249,7 +248,6 @@ def _begin_multi_edit(index: int) -> None:
     st.session_state.multi_editing_index = index
     current = st.session_state.multi_dialogue[index].content
     st.session_state.multi_editing_text = current
-    st.session_state[f"multi_edit_area_{index}"] = current
     st.session_state.multi_edit_notice = ""
 
 
