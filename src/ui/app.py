@@ -125,6 +125,20 @@ def init_state() -> None:
         st.session_state.show_candidates = False
     if "token_usage" not in st.session_state:
         st.session_state.token_usage = {}
+    if "multi_dialogue" not in st.session_state:
+        st.session_state.multi_dialogue = []  # type: ignore[assignment]
+    if "multi_memory_manager" not in st.session_state:
+        st.session_state.multi_memory_manager = MemoryManager()
+    if "multi_candidates" not in st.session_state:
+        st.session_state.multi_candidates = []  # type: ignore[assignment]
+    if "multi_context_pack" not in st.session_state:
+        st.session_state.multi_context_pack = {}
+    if "multi_token_usage" not in st.session_state:
+        st.session_state.multi_token_usage = {}
+    if "multi_pending_generation" not in st.session_state:
+        st.session_state.multi_pending_generation = None
+    if "multi_is_thinking" not in st.session_state:
+        st.session_state.multi_is_thinking = False
     if "conversation_title" not in st.session_state:
         st.session_state.conversation_title = "New Conversation"
     if "title_generated" not in st.session_state:
@@ -150,6 +164,13 @@ def new_chat() -> None:
     st.session_state.memory_manager = MemoryManager()
     st.session_state.last_judged = []
     st.session_state.token_usage = {}
+    st.session_state.multi_dialogue = []
+    st.session_state.multi_memory_manager = MemoryManager()
+    st.session_state.multi_candidates = []
+    st.session_state.multi_context_pack = {}
+    st.session_state.multi_token_usage = {}
+    st.session_state.multi_pending_generation = None
+    st.session_state.multi_is_thinking = False
     st.session_state.conversation_title = "New Conversation"
     st.session_state.title_generated = False
     st.session_state.pending_title_prompt = ""
@@ -342,6 +363,33 @@ async def run_pipeline(
     return context_pack, candidates, judged, best, judge_meta
 
 
+async def run_candidate_generation(
+    settings: Dict[str, Any],
+    history: Sequence[Turn],
+    memory_manager: MemoryManager,
+) -> Tuple[Dict[str, Any], Sequence[Candidate]]:
+    history_list: List[Turn] = list(history)
+    state = DialogueState(history=history_list, memory=memory_manager.store)
+    context_pack = build_context(state, memory_manager, k=int(settings["CONTEXT_K"]))
+    recent_turns = window_history(state.history, k=int(settings["CONTEXT_K"]))
+    candidates = await generate_candidates(
+        base_url=settings["GEN_BASE_URL"],
+        api_key=settings["GEN_API_KEY"],
+        model=settings["GEN_MODEL"],
+        history=recent_turns,
+        memory_summary=context_pack.get("memory_summary", {}),
+        n=int(settings["N_CANDIDATES"]),
+        temperature=float(settings["TEMPERATURE"]),
+        top_p=float(settings["TOP_P"]),
+        max_tokens=int(settings["MAX_TOKENS"]),
+        presence_penalty=float(settings["PRESENCE_PENALTY"]),
+        frequency_penalty=float(settings["FREQUENCY_PENALTY"]),
+        timeout=float(settings["GEN_TIMEOUT_S"]),
+        system_prompt=str(settings.get("GEN_SYSTEM_PROMPT", "")),
+    )
+    return context_pack, candidates
+
+
 def _apply_generation_success(
     context_pack: Dict[str, Any],
     candidates: Sequence[Candidate],
@@ -453,6 +501,27 @@ def _execute_generation(settings: Dict[str, Any], *, new_user: bool) -> None:
         _update_conversation_title_if_needed(settings)
 
 
+def _execute_multi_generation(settings: Dict[str, Any], *, new_user: bool) -> None:
+    history_snapshot = [Turn(**turn.dict()) for turn in st.session_state.multi_dialogue]
+    memory_manager: MemoryManager = st.session_state.multi_memory_manager
+    try:
+        context_pack, candidates = asyncio.run(
+            run_candidate_generation(settings, history_snapshot, memory_manager)
+        )
+    except Exception as exc:  # pragma: no cover - network error path
+        st.error(f"Generation failed: {exc}")
+        if new_user and st.session_state.multi_dialogue and st.session_state.multi_dialogue[-1].role == "user":
+            st.session_state.multi_dialogue.pop()
+        st.session_state.multi_candidates = []
+        st.session_state.multi_context_pack = {}
+        st.session_state.multi_token_usage = {}
+        return
+
+    st.session_state.multi_candidates = list(candidates)
+    st.session_state.multi_context_pack = context_pack
+    st.session_state.multi_token_usage = {}
+
+
 def _format_usage(usages: Sequence[Dict[str, Any]], text: str) -> str:
     if usages:
         usage = usages[0]
@@ -464,6 +533,44 @@ def _format_usage(usages: Sequence[Dict[str, Any]], text: str) -> str:
         estimate = estimate_tokens(text)
         return f"≈{estimate} tokens"
     return "n/a"
+
+
+def _apply_multi_selection(index: int) -> bool:
+    candidates: Sequence[Candidate] = st.session_state.multi_candidates
+    if not candidates or index < 0 or index >= len(candidates):
+        return False
+
+    chosen = candidates[index]
+    st.session_state.multi_dialogue.append(
+        Turn(
+            role="assistant",
+            content=chosen.text,
+            meta={"style": chosen.meta.get("decoding", {}).get("style")},
+        )
+    )
+    usage_summary = {
+        "generator": [cand.meta.get("usage") for cand in candidates if cand.meta.get("usage")],
+        "judge": None,
+    }
+    st.session_state.multi_token_usage = {
+        "generator": _format_usage(usage_summary["generator"], chosen.text),
+        "judge": "n/a",
+    }
+    context_pack = st.session_state.get("multi_context_pack", {})
+    try:
+        log_turn(
+            context_pack=context_pack,
+            candidates=candidates,
+            judged=[],
+            chosen=chosen.text,
+            usage=usage_summary,
+            metadata={},
+        )
+    except Exception:  # pragma: no cover - logging failures should not break UI
+        pass
+    st.session_state.multi_candidates = []
+    st.session_state.multi_context_pack = {}
+    return True
 
 
 def handle_send(user_text: str) -> bool:
@@ -484,6 +591,22 @@ def handle_regenerate() -> bool:
     _clear_edit_state()
     st.session_state.edit_notice = ""
     st.session_state.dialogue.pop()
+    return True
+
+
+def handle_multi_send(user_text: str) -> bool:
+    message = user_text.strip()
+    if not message:
+        return False
+    st.session_state.multi_dialogue.append(Turn(role="user", content=message))
+    return True
+
+
+def handle_multi_regenerate() -> bool:
+    if not st.session_state.multi_dialogue:
+        return False
+    if st.session_state.multi_dialogue[-1].role != "user":
+        return False
     return True
 
 
@@ -599,7 +722,7 @@ def render_sidebar(settings: Dict[str, Any]) -> Dict[str, Any]:
     return settings
 
 
-def render_chat_area(settings: Dict[str, Any]) -> None:
+def render_judge_chat(settings: Dict[str, Any]) -> None:
     title = st.session_state.conversation_title or "Conversation"
     st.markdown(
         f"<div class='chat-header'><h2>{title}</h2></div>",
@@ -742,11 +865,115 @@ def render_chat_area(settings: Dict[str, Any]) -> None:
         st.info(st.session_state.edit_notice)
 
 
+def render_multi_choice_chat(settings: Dict[str, Any]) -> None:
+    st.markdown("<div class='chat-header'><h2>Multi-choice Chat</h2></div>", unsafe_allow_html=True)
+    usage = st.session_state.multi_token_usage
+    if usage:
+        st.markdown(
+            f"<div class='token-counter'>Usage · Generator: {usage.get('generator', 'n/a')}</div>",
+            unsafe_allow_html=True,
+        )
+
+    chat_placeholder = st.empty()
+
+    def draw_multi_chat(thinking: bool = False) -> None:
+        chat_placeholder.empty()
+        with chat_placeholder.container():
+            inject_css()
+            st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
+            for turn in st.session_state.multi_dialogue:
+                render_message(turn, 0)
+            if thinking:
+                st.markdown(
+                    """
+                    <div class='chat-row right'>
+                        <div class='chat-bubble assistant thinking-bubble'>
+                        <div class='chat-role'>Assistant</div>
+                        <div class='chat-content'><em>Thinking…</em></div>
+                    </div>
+                </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    draw_multi_chat(thinking=bool(st.session_state.get("multi_is_thinking")))
+
+    with st.form("multi-chat-input", clear_on_submit=True):
+        user_text = st.text_area("Message", height=120, key="multi_chat_input")
+        cols = st.columns([1, 1])
+        send_clicked = cols[0].form_submit_button("Send", type="primary")
+        regenerate_clicked = cols[1].form_submit_button("Regenerate candidates")
+
+    if send_clicked:
+        if st.session_state.multi_candidates:
+            st.warning("Select or regenerate the existing candidates before sending a new message.")
+        elif st.session_state.multi_dialogue and st.session_state.multi_dialogue[-1].role == "user":
+            st.warning("Awaiting assistant response. Choose a candidate or regenerate.")
+        elif handle_multi_send(user_text):
+            st.session_state.multi_pending_generation = {
+                "settings": dict(settings),
+                "new_user": True,
+                "label": "Generating candidates…",
+            }
+            st.session_state.multi_is_thinking = True
+            _trigger_rerun()
+            return
+        else:
+            st.warning("Please enter a message before sending.")
+    elif regenerate_clicked:
+        if not handle_multi_regenerate():
+            st.info("Nothing to regenerate yet.")
+        else:
+            st.session_state.multi_pending_generation = {
+                "settings": dict(settings),
+                "new_user": False,
+                "label": "Regenerating candidates…",
+            }
+            st.session_state.multi_is_thinking = True
+            _trigger_rerun()
+            return
+
+    pending = st.session_state.get("multi_pending_generation")
+    if pending:
+        label = str(pending.get("label", "Generating candidates…"))
+        pending_settings = dict(pending.get("settings", {}))
+        new_user = bool(pending.get("new_user", True))
+        with st.spinner(label):
+            _execute_multi_generation(pending_settings, new_user=new_user)
+        st.session_state.multi_pending_generation = None
+        st.session_state.multi_is_thinking = False
+        _trigger_rerun()
+        return
+
+    if st.session_state.multi_candidates:
+        st.markdown("### Choose a response")
+        for idx, candidate in enumerate(st.session_state.multi_candidates):
+            with st.container():
+                st.markdown(
+                    f"""
+                    <div class='candidate-card'>
+                        <div class='candidate-rank'>Option {idx + 1}</div>
+                        <div class='candidate-text'>{candidate.text}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if st.button("Select this response", key=f"multi-select-{idx}"):
+                    if _apply_multi_selection(idx):
+                        st.session_state.multi_is_thinking = False
+                        _trigger_rerun()
+                        return
+
 def main() -> None:
     init_state()
     settings = st.session_state.settings
     st.session_state.settings = render_sidebar(settings)
-    render_chat_area(st.session_state.settings)
+    judge_tab, multi_tab = st.tabs(["Judge chat", "Multi-choice chat"])
+    with judge_tab:
+        render_judge_chat(st.session_state.settings)
+    with multi_tab:
+        render_multi_choice_chat(st.session_state.settings)
 
 
 if __name__ == "__main__":  # pragma: no cover - entry point
