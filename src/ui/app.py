@@ -69,6 +69,14 @@ def _trigger_rerun() -> None:
         st.rerun()
 
 
+def _force_rerun() -> None:
+    _trigger_rerun()
+    try:
+        st.stop()
+    except Exception:  # pragma: no cover - safety for test execution
+        pass
+
+
 def _decode_env_value(value: str) -> str:
     """Decode escaped characters stored in .env values."""
 
@@ -900,17 +908,21 @@ def render_judge_chat(settings: Dict[str, Any]) -> None:
 
                     if edit_clicked:
                         _begin_edit(idx)
+                        _force_rerun()
                     if delete_clicked:
                         if not _delete_message(idx):
                             st.warning("Unable to delete message.")
 
                     if st.session_state.editing_index == idx:
                         if save_clicked:
-                            if not _apply_edit(st.session_state.editing_text):
+                            if _apply_edit(st.session_state.editing_text):
+                                _force_rerun()
+                            else:
                                 st.warning("Edited message cannot be empty.")
                         if cancel_clicked:
                             _clear_edit_state()
                             st.session_state.edit_notice = ""
+                            _force_rerun()
             if thinking:
                 st.markdown(
                     """
@@ -1039,17 +1051,21 @@ def render_multi_choice_chat(settings: Dict[str, Any]) -> None:
 
                     if edit_clicked:
                         _begin_multi_edit(idx)
+                        _force_rerun()
                     if delete_clicked:
                         if not _delete_multi_message(idx):
                             st.warning("Unable to delete message.")
 
                     if st.session_state.multi_editing_index == idx:
                         if save_clicked:
-                            if not _apply_multi_edit(st.session_state.multi_editing_text):
+                            if _apply_multi_edit(st.session_state.multi_editing_text):
+                                _force_rerun()
+                            else:
                                 st.warning("Edited message cannot be empty.")
                         if cancel_clicked:
                             _clear_multi_edit_state()
                             st.session_state.multi_edit_notice = ""
+                            _force_rerun()
             if thinking:
                 st.markdown(
                     """
