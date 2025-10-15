@@ -139,6 +139,12 @@ def init_state() -> None:
         st.session_state.multi_pending_generation = None
     if "multi_is_thinking" not in st.session_state:
         st.session_state.multi_is_thinking = False
+    if "multi_editing_index" not in st.session_state:
+        st.session_state.multi_editing_index = None  # type: ignore[assignment]
+    if "multi_editing_text" not in st.session_state:
+        st.session_state.multi_editing_text = ""
+    if "multi_edit_notice" not in st.session_state:
+        st.session_state.multi_edit_notice = ""
     if "conversation_title" not in st.session_state:
         st.session_state.conversation_title = "New Conversation"
     if "title_generated" not in st.session_state:
@@ -171,6 +177,9 @@ def new_chat() -> None:
     st.session_state.multi_token_usage = {}
     st.session_state.multi_pending_generation = None
     st.session_state.multi_is_thinking = False
+    st.session_state.multi_editing_index = None
+    st.session_state.multi_editing_text = ""
+    st.session_state.multi_edit_notice = ""
     st.session_state.conversation_title = "New Conversation"
     st.session_state.title_generated = False
     st.session_state.pending_title_prompt = ""
@@ -214,6 +223,14 @@ def _clear_edit_state() -> None:
     st.session_state.editing_text = ""
 
 
+def _clear_multi_edit_state() -> None:
+    index = st.session_state.multi_editing_index
+    if index is not None:
+        st.session_state.pop(f"multi_edit_area_{index}", None)
+    st.session_state.multi_editing_index = None
+    st.session_state.multi_editing_text = ""
+
+
 def _begin_edit(index: int) -> None:
     previous = st.session_state.editing_index
     if previous is not None and previous != index:
@@ -223,6 +240,17 @@ def _begin_edit(index: int) -> None:
     st.session_state.editing_text = current
     st.session_state[f"edit_area_{index}"] = current
     st.session_state.edit_notice = ""
+
+
+def _begin_multi_edit(index: int) -> None:
+    previous = st.session_state.multi_editing_index
+    if previous is not None and previous != index:
+        st.session_state.pop(f"multi_edit_area_{previous}", None)
+    st.session_state.multi_editing_index = index
+    current = st.session_state.multi_dialogue[index].content
+    st.session_state.multi_editing_text = current
+    st.session_state[f"multi_edit_area_{index}"] = current
+    st.session_state.multi_edit_notice = ""
 
 
 def _editor_height(text: str) -> int:
@@ -260,6 +288,40 @@ def _render_inline_editor(turn: Turn, idx: int) -> Tuple[str, bool, bool]:
         cancel_clicked = st.button(
             "Cancel",
             key=f"cancel-edit-{idx}",
+            use_container_width=True,
+        )
+    st.markdown("</div></div>", unsafe_allow_html=True)
+    return edit_value, save_clicked, cancel_clicked
+
+
+def _render_multi_inline_editor(turn: Turn, idx: int) -> Tuple[str, bool, bool]:
+    align = "left" if turn.role == "user" else "right"
+    role_class = "user" if turn.role == "user" else "assistant"
+    current_text = st.session_state.get(
+        f"multi_edit_area_{idx}", st.session_state.multi_editing_text or turn.content
+    )
+    st.markdown(
+        f"<div class='chat-row {align}'><div class='chat-bubble {role_class} editing' data-role='{role_class}'>",
+        unsafe_allow_html=True,
+    )
+    edit_value = st.text_area(
+        "Edit message",
+        value=current_text,
+        key=f"multi_edit_area_{idx}",
+        height=_editor_height(current_text),
+        label_visibility="collapsed",
+    )
+    action_cols = st.columns([1, 1, 6])
+    with action_cols[0]:
+        save_clicked = st.button(
+            "Save",
+            key=f"multi-save-edit-{idx}",
+            use_container_width=True,
+        )
+    with action_cols[1]:
+        cancel_clicked = st.button(
+            "Cancel",
+            key=f"multi-cancel-edit-{idx}",
             use_container_width=True,
         )
     st.markdown("</div></div>", unsafe_allow_html=True)
@@ -311,6 +373,58 @@ def _apply_edit(new_text: str) -> bool:
         "Message updated. Regenerate the assistant reply to continue."
     )
     _clear_edit_state()
+    return True
+
+
+def _delete_multi_message(index: int) -> bool:
+    dialogue = list(st.session_state.multi_dialogue)
+    if index < 0 or index >= len(dialogue):
+        return False
+
+    deleted_turn = dialogue[index]
+    st.session_state.multi_dialogue = dialogue[:index]
+    _clear_multi_edit_state()
+    st.session_state.multi_memory_manager = _rebuild_memory(st.session_state.multi_dialogue)
+    st.session_state.multi_candidates = []
+    st.session_state.multi_context_pack = {}
+    st.session_state.multi_token_usage = {}
+    st.session_state.multi_pending_generation = None
+    st.session_state.multi_is_thinking = False
+    if deleted_turn.role == "assistant":
+        st.session_state.multi_edit_notice = (
+            "Assistant reply deleted. Regenerate candidates to continue."
+        )
+    else:
+        st.session_state.multi_edit_notice = (
+            "Message deleted. Provide a new prompt to continue."
+        )
+    return True
+
+
+def _apply_multi_edit(new_text: str) -> bool:
+    index = st.session_state.multi_editing_index
+    if index is None:
+        return False
+
+    stripped = new_text.strip()
+    if not stripped:
+        return False
+
+    dialogue = list(st.session_state.multi_dialogue)
+    turn = dialogue[index]
+    dialogue[index] = Turn(role=turn.role, content=stripped, meta=turn.meta)
+    st.session_state.multi_dialogue = dialogue[: index + 1]
+    st.session_state.multi_memory_manager = _rebuild_memory(st.session_state.multi_dialogue)
+    st.session_state.multi_candidates = []
+    st.session_state.multi_context_pack = {}
+    st.session_state.multi_token_usage = {}
+    st.session_state.multi_pending_generation = None
+    st.session_state.multi_is_thinking = False
+    if turn.role == "assistant":
+        st.session_state.multi_edit_notice = "Assistant reply updated."
+    else:
+        st.session_state.multi_edit_notice = "Message updated. Regenerate candidates to continue."
+    _clear_multi_edit_state()
     return True
 
 
@@ -502,6 +616,8 @@ def _execute_generation(settings: Dict[str, Any], *, new_user: bool) -> None:
 
 
 def _execute_multi_generation(settings: Dict[str, Any], *, new_user: bool) -> None:
+    _clear_multi_edit_state()
+    st.session_state.multi_edit_notice = ""
     history_snapshot = [Turn(**turn.dict()) for turn in st.session_state.multi_dialogue]
     memory_manager: MemoryManager = st.session_state.multi_memory_manager
     try:
@@ -515,11 +631,13 @@ def _execute_multi_generation(settings: Dict[str, Any], *, new_user: bool) -> No
         st.session_state.multi_candidates = []
         st.session_state.multi_context_pack = {}
         st.session_state.multi_token_usage = {}
+        st.session_state.multi_edit_notice = "Generation failed. Adjust the message and try again."
         return
 
     st.session_state.multi_candidates = list(candidates)
     st.session_state.multi_context_pack = context_pack
     st.session_state.multi_token_usage = {}
+    st.session_state.multi_edit_notice = ""
 
 
 def _format_usage(usages: Sequence[Dict[str, Any]], text: str) -> str:
@@ -570,6 +688,7 @@ def _apply_multi_selection(index: int) -> bool:
         pass
     st.session_state.multi_candidates = []
     st.session_state.multi_context_pack = {}
+    st.session_state.multi_edit_notice = ""
     return True
 
 
@@ -598,6 +717,8 @@ def handle_multi_send(user_text: str) -> bool:
     message = user_text.strip()
     if not message:
         return False
+    _clear_multi_edit_state()
+    st.session_state.multi_edit_notice = ""
     st.session_state.multi_dialogue.append(Turn(role="user", content=message))
     return True
 
@@ -607,6 +728,8 @@ def handle_multi_regenerate() -> bool:
         return False
     if st.session_state.multi_dialogue[-1].role != "user":
         return False
+    _clear_multi_edit_state()
+    st.session_state.multi_edit_notice = ""
     return True
 
 
@@ -881,8 +1004,54 @@ def render_multi_choice_chat(settings: Dict[str, Any]) -> None:
         with chat_placeholder.container():
             inject_css()
             st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
-            for turn in st.session_state.multi_dialogue:
-                render_message(turn, 0)
+            for idx, turn in enumerate(st.session_state.multi_dialogue):
+                with st.container():
+                    if turn.role == "user":
+                        message_col, actions_col = st.columns([24, 2])
+                    else:
+                        actions_col, message_col = st.columns([2, 24])
+
+                    save_clicked = False
+                    cancel_clicked = False
+                    with message_col:
+                        if st.session_state.multi_editing_index == idx:
+                            edit_value, save_clicked, cancel_clicked = _render_multi_inline_editor(
+                                turn, idx
+                            )
+                            st.session_state.multi_editing_text = edit_value
+                        else:
+                            render_message(turn, idx)
+
+                    with actions_col:
+                        action_stack = st.container()
+                        action_stack.markdown(
+                            "<div class='chat-action-stack'>", unsafe_allow_html=True
+                        )
+                        edit_clicked = action_stack.button(
+                            "✏️",
+                            key=f"multi-edit-btn-{idx}",
+                            help="Edit message",
+                        )
+                        delete_clicked = action_stack.button(
+                            "🗑️",
+                            key=f"multi-delete-btn-{idx}",
+                            help="Delete message",
+                        )
+                        action_stack.markdown("</div>", unsafe_allow_html=True)
+
+                    if edit_clicked:
+                        _begin_multi_edit(idx)
+                    if delete_clicked:
+                        if not _delete_multi_message(idx):
+                            st.warning("Unable to delete message.")
+
+                    if st.session_state.multi_editing_index == idx:
+                        if save_clicked:
+                            if not _apply_multi_edit(st.session_state.multi_editing_text):
+                                st.warning("Edited message cannot be empty.")
+                        if cancel_clicked:
+                            _clear_multi_edit_state()
+                            st.session_state.multi_edit_notice = ""
             if thinking:
                 st.markdown(
                     """
@@ -949,21 +1118,19 @@ def render_multi_choice_chat(settings: Dict[str, Any]) -> None:
     if st.session_state.multi_candidates:
         st.markdown("### Choose a response")
         for idx, candidate in enumerate(st.session_state.multi_candidates):
-            with st.container():
-                st.markdown(
-                    f"""
-                    <div class='candidate-card'>
-                        <div class='candidate-rank'>Option {idx + 1}</div>
-                        <div class='candidate-text'>{candidate.text}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                if st.button("Select this response", key=f"multi-select-{idx}"):
-                    if _apply_multi_selection(idx):
-                        st.session_state.multi_is_thinking = False
-                        _trigger_rerun()
-                        return
+            button_label = f"Option {idx + 1}\n{candidate.text}"
+            if st.button(
+                button_label,
+                key=f"multi-select-{idx}",
+                use_container_width=True,
+            ):
+                if _apply_multi_selection(idx):
+                    st.session_state.multi_is_thinking = False
+                    _trigger_rerun()
+                    return
+
+    if st.session_state.multi_edit_notice:
+        st.info(st.session_state.multi_edit_notice)
 
 def main() -> None:
     init_state()
